@@ -1,99 +1,134 @@
-"""Unit tests for services."""
+"""Unit tests for service layer functionality."""
 import pytest
-from unittest.mock import Mock, AsyncMock
-from backend.app.shared.services.email import EmailService
-from backend.app.auth.service import AuthService
-from backend.app.shared.config.jwt import create_access_token, verify_token, verify_password, get_password_hash
+from datetime import datetime, date
+from unittest.mock import Mock, patch
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '../../backend'))
 
-class TestEmailService:
-    """Test email service functionality."""
+from backend.app.services.calculation_engine import AgeCalculationEngine
+from backend.app.services.validation_service import ValidationService
+from backend.app.services.report_service import ReportService
 
-    @pytest.fixture
-    def email_service(self):
-        return EmailService()
+class TestAgeCalculationEngine:
+    """Test cases for age calculation engine."""
 
-    @pytest.mark.asyncio
-    async def test_send_email_success(self, email_service):
-        """Test successful email sending."""
-        # Mock SMTP for testing
-        result = await email_service.send_email(
-            to_emails=["test@example.com"],
-            subject="Test Subject",
-            html_content="<p>Test</p>",
-            text_content="Test"
-        )
-        # Should return True even in test mode
-        assert isinstance(result, bool)
+    def setup_method(self):
+        """Setup test fixtures."""
+        self.calculator = AgeCalculationEngine()
 
-    @pytest.mark.asyncio
-    async def test_send_welcome_email(self, email_service):
-        """Test welcome email sending."""
-        result = await email_service.send_welcome_email(
-            email="test@example.com",
-            full_name="Test User"
-        )
-        assert isinstance(result, bool)
+    def test_calculate_age_basic(self):
+        """Test basic age calculation."""
+        birth_date = date(1990, 1, 1)
+        target_date = date(2023, 1, 1)
 
-class TestJWTUtils:
-    """Test JWT utility functions."""
+        result = self.calculator.calculate_age(birth_date, target_date)
 
-    def test_password_hashing(self):
-        """Test password hashing and verification."""
-        password = "testpassword123"
-        hashed = get_password_hash(password)
+        assert result['years'] == 33
+        assert result['months'] == 0
+        assert result['days'] == 0
+        assert result['total_days'] == 12053
 
-        assert hashed != password
-        assert verify_password(password, hashed)
-        assert not verify_password("wrongpassword", hashed)
+    def test_calculate_age_with_months_days(self):
+        """Test age calculation with partial months and days."""
+        birth_date = date(1990, 3, 15)
+        target_date = date(2023, 7, 22)
 
-    def test_token_creation_and_verification(self):
-        """Test JWT token creation and verification."""
-        user_id = 123
-        token = create_access_token(subject=user_id)
+        result = self.calculator.calculate_age(birth_date, target_date)
 
-        assert isinstance(token, str)
-        assert len(token) > 0
+        assert result['years'] == 33
+        assert result['months'] == 4
+        assert result['days'] == 7
 
-        verified_id = verify_token(token)
-        assert verified_id == str(user_id)
+    def test_leap_year_handling(self):
+        """Test leap year calculations."""
+        birth_date = date(2000, 2, 29)  # Leap year
+        target_date = date(2001, 2, 28)
 
-    def test_invalid_token_verification(self):
-        """Test verification of invalid token."""
-        invalid_token = "invalid.token.here"
-        result = verify_token(invalid_token)
-        assert result is None
+        result = self.calculator.calculate_age(birth_date, target_date)
 
-class TestAuthService:
-    """Test authentication service."""
+        assert result['years'] == 0
+        assert result['months'] == 11
+        assert result['days'] == 30
 
-    @pytest.fixture
-    def mock_db(self):
-        """Mock database session."""
-        db = Mock()
-        db.query.return_value.filter.return_value.first.return_value = None
-        db.add = Mock()
-        db.commit = Mock()
-        db.refresh = Mock()
-        return db
+    def test_invalid_date_range(self):
+        """Test handling of invalid date ranges."""
+        birth_date = date(2023, 1, 1)
+        target_date = date(2020, 1, 1)  # Target before birth
 
-    def test_get_user_by_email_not_found(self, mock_db):
-        """Test getting user by email when not found."""
-        result = AuthService.get_user_by_email(mock_db, "test@example.com")
-        assert result is None
+        with pytest.raises(ValueError, match="Target date must be after birth date"):
+            self.calculator.calculate_age(birth_date, target_date)
 
-    def test_create_user_success(self, mock_db):
-        """Test successful user creation."""
-        user = AuthService.create_user(
-            db=mock_db,
-            email="test@example.com",
-            password="password123",
-            full_name="Test User"
-        )
+class TestValidationService:
+    """Test cases for validation service."""
 
-        mock_db.add.assert_called_once()
-        mock_db.commit.assert_called_once()
-        mock_db.refresh.assert_called_once()
+    def setup_method(self):
+        """Setup test fixtures."""
+        self.validator = ValidationService()
 
-        assert user.email == "test@example.com"
-        assert user.full_name == "Test User"
-        assert user.password_hash != "password123"  # Should be hashed
+    def test_validate_date_format(self):
+        """Test date format validation."""
+        valid_date = "1990-01-01"
+        invalid_date = "01-01-1990"
+
+        assert self.validator.validate_date_format(valid_date) is True
+        assert self.validator.validate_date_format(invalid_date) is False
+
+    def test_validate_date_range(self):
+        """Test date range validation."""
+        birth_date = date(1990, 1, 1)
+        valid_target = date(2023, 1, 1)
+        invalid_target = date(1989, 1, 1)
+
+        assert self.validator.validate_date_range(birth_date, valid_target) is True
+        assert self.validator.validate_date_range(birth_date, invalid_target) is False
+
+    def test_validate_precision_level(self):
+        """Test precision level validation."""
+        valid_levels = ["days", "months", "years"]
+        invalid_level = "hours"
+
+        for level in valid_levels:
+            assert self.validator.validate_precision_level(level) is True
+
+        assert self.validator.validate_precision_level(invalid_level) is False
+
+class TestReportService:
+    """Test cases for report service."""
+
+    def setup_method(self):
+        """Setup test fixtures."""
+        self.report_service = ReportService()
+
+    @patch('backend.app.services.report_service.ReportService.get_calculation_history')
+    def test_generate_user_report(self, mock_history):
+        """Test user report generation."""
+        mock_history.return_value = [
+            {
+                'calculation_id': '123',
+                'birth_date': '1990-01-01',
+                'target_date': '2023-01-01',
+                'years': 33,
+                'created_at': '2023-01-01T00:00:00'
+            }
+        ]
+
+        report = self.report_service.generate_user_report('user123')
+
+        assert 'total_calculations' in report
+        assert 'calculations' in report
+        assert report['total_calculations'] == 1
+
+    def test_format_calculation_result(self):
+        """Test calculation result formatting."""
+        raw_result = {
+            'years': 33,
+            'months': 4,
+            'days': 7,
+            'total_days': 12153
+        }
+
+        formatted = self.report_service.format_calculation_result(raw_result)
+
+        assert 'age_string' in formatted
+        assert '33 years, 4 months, 7 days' in formatted['age_string']

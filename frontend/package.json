@@ -1,4 +1,9 @@
 {
+  "scripts": {
+    "test": "jest --coverage",
+    "test:watch": "jest --watch",
+    "test:integration": "jest --config jest.integration.config.js"
+  },
   "name": "project",
   "version": "1.0.0"
 }
