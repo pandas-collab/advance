@@ -1,45 +1,55 @@
-"""JWT configuration and utilities."""
-from datetime import datetime, timedelta
-from typing import Any, Union
+"""JWT token configuration and utilities."""
 import os
-from jose import JWTError, jwt
-from passlib.context import CryptContext
-from decouple import config
+import jwt
+from datetime import datetime, timedelta
+from typing import Optional, Dict, Any
 
-# JWT Settings
-SECRET_KEY = config("SECRET_KEY", default="your-secret-key-change-this-in-production")
+# JWT Configuration
+SECRET_KEY = os.getenv("JWT_SECRET_KEY", "your-secret-key-change-in-production")
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
 
-# Password hashing
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-def create_access_token(subject: Union[str, Any], expires_delta: timedelta = None):
+def create_access_token(data: Dict[str, Any], expires_delta: Optional[timedelta] = None) -> str:
     """Create JWT access token."""
+    to_encode = data.copy()
+
     if expires_delta:
         expire = datetime.utcnow() + expires_delta
     else:
         expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
 
-    to_encode = {"exp": expire, "sub": str(subject)}
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
+    to_encode.update({"exp": expire, "iat": datetime.utcnow()})
 
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify password against hash."""
-    return pwd_context.verify(plain_password, hashed_password)
+    try:
+        encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+        return encoded_jwt
+    except Exception as e:
+        raise ValueError(f"Token creation failed: {e}")
 
-def get_password_hash(password: str) -> str:
-    """Generate password hash."""
-    return pwd_context.hash(password)
-
-def verify_token(token: str) -> Union[str, None]:
-    """Verify JWT token and return subject."""
+def verify_token(token: str) -> Optional[Dict[str, Any]]:
+    """Verify and decode JWT token."""
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        user_id: str = payload.get("sub")
-        if user_id is None:
-            return None
-        return user_id
-    except JWTError:
+        return payload
+    except jwt.ExpiredSignatureError:
         return None
+    except jwt.JWTError:
+        return None
+
+def create_api_token(api_key_id: str, permissions: list) -> str:
+    """Create API token for API key authentication."""
+    data = {
+        "api_key_id": api_key_id,
+        "permissions": permissions,
+        "type": "api_key"
+    }
+    # API tokens have longer expiration
+    expires_delta = timedelta(hours=24)
+    return create_access_token(data, expires_delta)
+
+def decode_api_token(token: str) -> Optional[Dict[str, Any]]:
+    """Decode API token and return payload."""
+    payload = verify_token(token)
+    if payload and payload.get("type") == "api_key":
+        return payload
+    return None
